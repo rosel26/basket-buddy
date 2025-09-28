@@ -11,7 +11,8 @@ import SwiftUI
 struct BasketBuddyApp: App {
     var body: some Scene {
         WindowGroup {
-            CartControlView()
+            RootView()
         }
+      
     }
 }

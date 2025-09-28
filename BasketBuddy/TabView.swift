@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct RootView: View {
-    @State private var isConnected = false   // controls when to show tabs
+    @State private var isConnected = false
 
     var body: some View {
         if isConnected {
@@ -22,18 +22,19 @@ struct RootView: View {
 struct MainTabView: View {
     var body: some View {
         TabView {
+            // Home/Cart Control
             CartControlView()
                 .tabItem {
                     Image(systemName: "house")
                     Text("Home")
                 }
-
-            // 3. Basket Screen
+            // Basket Contents
             BasketView()
                 .tabItem {
                     Image(systemName: "cart")
                     Text("Cart")
                 }
+            // Settings
             SettingView()
                 .tabItem {
                     Image(systemName: "gearshape")
@@ -68,7 +69,7 @@ struct WelcomeView: View {
             Spacer()
 
             Button("Connect") {
-                // UWB HERE
+                // UWB LOGIC HERE
                 isConnected = true
             }
             .font(.headline)
@@ -85,29 +86,65 @@ struct WelcomeView: View {
 struct CartControlView: View {
     var body: some View {
         VStack(spacing: 40) {
-            Spacer()
-            Text("You are connected")
+            Text("Your cart is active")
                 .font(.headline)
-
-            ForEach(["Start Cart", "Stop Cart", "Disconnect"], id: \.self) { label in
-                Button(label) {
-                }
-                .font(.title3)
-                .frame(width: 200, height: 60)
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
-                .foregroundColor(.black)
+                .padding(.top, 20)
+            
+            // Start Cart Button
+            Button(action: {
+                startCart()
+            }) {
+                Text("Start Cart")
+                    .font(.title3)
+                    .foregroundColor(.black)
+                    .frame(width: 200, height: 60)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
             }
-            Spacer()
+            
+            // Stop Cart Button
+            Button(action: {
+                stopCart()
+            }) {
+                Text("Stop Cart")
+                    .font(.title3)
+                    .foregroundColor(.black)
+                    .frame(width: 200, height: 60)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+            }
+            
+            // Disconnect Button
+            Button(action: {
+                disconnectCart()
+            }) {
+                Text("Disconnect")
+                    .font(.title3)
+                    .foregroundColor(.black)
+                    .frame(width: 200, height: 60)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.white)
     }
+}
+
+func startCart() {
+}
+
+func stopCart() {
+}
+
+func disconnectCart() {
 }
 
 struct BasketView: View {
     let products = [
         ("Product 1", 4.99),
-        ("Product 2", 2.99),
-        ("Product 3", 6.99),
+        ("Product 2", 6.99),
+        ("Product 3", 5.99),
         ("Product 4", 6.99)
     ]
 
