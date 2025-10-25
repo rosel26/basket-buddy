@@ -10,9 +10,22 @@
 		3F7D08D52E8763330036CCA1 /* BasketBuddy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BasketBuddy.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3F222E8C2E92068200C91261 /* Exceptions for "BasketBuddy" folder in "BasketBuddy" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3F7D08D42E8763330036CCA1 /* BasketBuddy */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3F7D08D72E8763330036CCA1 /* BasketBuddy */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3F222E8C2E92068200C91261 /* Exceptions for "BasketBuddy" folder in "BasketBuddy" target */,
+			);
 			path = BasketBuddy;
 			sourceTree = "<group>";
 		};
@@ -255,10 +268,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 2VFGU9H8QP;
+				DEVELOPMENT_TEAM = 7LT2428A29;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BasketBuddy/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app needs access to the camera to scan barcodes.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs to use the local network to discover nearby devices.";
 				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "Please enable so that the cart can track you";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -271,7 +286,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.Elly.BasketBuddy.test;
+				PRODUCT_BUNDLE_IDENTIFIER = com.Rose.BasketBuddy.test;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -290,10 +305,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 2VFGU9H8QP;
+				DEVELOPMENT_TEAM = 7LT2428A29;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BasketBuddy/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app needs access to the camera to scan barcodes.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs to use the local network to discover nearby devices.";
 				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "Please enable so that the cart can track you";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -306,7 +323,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.Elly.BasketBuddy.test;
+				PRODUCT_BUNDLE_IDENTIFIER = com.Rose.BasketBuddy.test;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;

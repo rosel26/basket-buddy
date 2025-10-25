@@ -48,6 +48,8 @@ struct MainTabView: View {
 
 struct WelcomeView: View {
     @Binding var isConnected: Bool
+    @StateObject private var uwb = UWBManager()
+    @State private var isConnecting = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -63,15 +65,21 @@ struct WelcomeView: View {
                 .multilineTextAlignment(.center)
                 .bold()
 
-            Text("the next generation’s\nshopping cart")
+            Text("THE next generation’s\nshopping cart")
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
 
             Spacer()
 
-            Button("Connect") {
-                // UWB LOGIC HERE
-                isConnected = true
+//            Button("Connect") {
+//                uwb.start()
+//                isConnected = true
+//            }
+            
+            Button(isConnecting ? "Connecting…" : "Connect") {
+                guard !isConnecting else { return }
+                isConnecting = true
+                uwb.start()
             }
             .font(.headline)
             .frame(width: 180, height: 50)
@@ -261,8 +269,6 @@ struct BasketView: View {
         }.resume()
     }
 }
-
-
 
 struct SettingView: View {
     var body: some View {
