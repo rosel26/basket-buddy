@@ -2,9 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_basket-uwb._tcp.</string>
-	</array>
+    <key>NSCameraUsageDescription</key>
+    <string>This app uses the camera for AR-based positioning and nearby interaction.</string>
+
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Bluetooth is required to communicate with nearby devices using UWB.</string>
+
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Local network access is used to find and connect to nearby iPhones.</string>
+
+    <key>NSMotionUsageDescription</key>
+    <string>Motion data helps improve AR tracking and direction accuracy.</string>
+
+    <key>NSNearbyInteractionUsageDescription</key>
+    <string>Nearby Interaction is used to measure precise distance and direction to another iPhone.</string>
+
+    <key>NSBluetoothServices</key>
+    <array>
+        <string>com.apple.trNearbyInteraction</string>
+    </array>
+
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_basket-uwb._tcp.</string>
+    </array>
 </dict>
 </plist>

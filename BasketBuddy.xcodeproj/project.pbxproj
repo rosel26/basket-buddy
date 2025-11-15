@@ -272,9 +272,12 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BasketBuddy/Info.plist;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Bluetooth required";
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app needs access to the camera to scan barcodes.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs to use the local network to discover nearby devices.";
-				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "Please enable so that the cart can track you";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Location access.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Motion access.";
+				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -309,9 +312,12 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BasketBuddy/Info.plist;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Bluetooth required";
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app needs access to the camera to scan barcodes.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs to use the local network to discover nearby devices.";
-				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "Please enable so that the cart can track you";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Location access.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Motion access.";
+				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
