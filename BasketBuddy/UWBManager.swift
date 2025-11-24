@@ -68,7 +68,7 @@ func bearingDegrees(lat1: Double, lon1: Double,
 
     var θ = atan2(y, x) * 180 / .pi  // degrees
     if θ < 0 { θ += 360 }
-    return θ  // 0=N, 90=E, etc.
+    return θ
 }
 
 @MainActor
@@ -368,7 +368,6 @@ final class UWBManager: NSObject, ObservableObject {
             lon2: peerLon
         )
             
-        // Smallest signed angle between bearing and heading: -180..+180
         let diff = (bearingToPeer - heading + 540).truncatingRemainder(dividingBy: 360) - 180
         return diff
     }
@@ -601,7 +600,6 @@ extension UWBManager: MCSessionDelegate {
                     print("### Cannot compute relative angle (missing heading or GPS)")
                 }
 
-                // send to Pi with relativeAngle
                 self.sendPoseToComputer(distance: pose.distance ?? -1,
                                         azimuth: nil,
                                         position: pose.position,
@@ -618,49 +616,6 @@ extension UWBManager: MCSessionDelegate {
                 self.status = "Peer: d=\(dist) pos=\(pos)"
             }
             return
-            
-//            Task { @MainActor in
-//                self.sendPoseToComputer(distance: pose.distance ?? -1,
-//                                        azimuth: nil,
-//                                        position: pose.position)
-//            }
-//                    
-//            Task { @MainActor in
-//            var myLatStr = "nil", myLonStr = "nil", myAccStr = "nil"
-//
-//            if let myLoc = self.lastLocation {
-//                myLatStr = String(format: "%.6f", myLoc.coordinate.latitude)
-//                myLonStr = String(format: "%.6f", myLoc.coordinate.longitude)
-//                myAccStr = String(format: "%.1f m", myLoc.horizontalAccuracy)
-//            }
-//
-//            print("""
-//                    Position @\(pose.t):
-//                        distance=\(dist) dir=\(dir) pos=\(pos)
-//                        SELF   GPS: lat=\(myLatStr) lon=\(myLonStr) acc=\(myAccStr)
-//                        PEER   GPS: lat=\(peerLatStr) lon=\(peerLonStr) acc=\(peerAccStr)
-//                    """)
-//
-//                    self.status = "Peer: d=\(dist) pos=\(pos)"
-//            }
-//            
-//          
-//
-////            print("Position @\(pose.t): "
-////                + "distance=\(dist) "
-////                + "dir=\(dir) "
-////                + "pos=\(pos) "
-////                + "lat=\(latStr) "
-////                + "lon=\(lonStr) "
-////                + "acc=\(accStr) "
-////                + "from \(peerID.displayName)")
-//            
-//            // sendPoseToComputer(distance: dist, azimuth: dir, position: pos)
-//            
-//            Task { @MainActor in
-//                self.status = "Peer: d=\(dist) pos=\(pos)"
-//            }
-//            return
         }
 
         Task { @MainActor in
