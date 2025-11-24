@@ -13,28 +13,18 @@ import OSLog
 import ARKit
 import AVFoundation
 import Network
+import CoreLocation
+
 
 private var udpConn: NWConnection?
 
 func setupUDP() {
     if udpConn != nil { return }
-    let host = NWEndpoint.Host("172.26.95.230")
+    let host = NWEndpoint.Host("")
     let port = NWEndpoint.Port("5555")!
     let conn = NWConnection(host: host, port: port, using: .udp)
     conn.start(queue: .global())
     udpConn = conn
-}
-
-func sendPoseToComputer(distance: Double, azimuth: Double?, position: [Float]?) {
-    setupUDP()
-    let frame: [String: Any] = [
-        "t": Date().timeIntervalSince1970,
-        "distance": distance,
-        "azimuth": azimuth as Any,
-        "position": position as Any
-    ]
-    let data = try! JSONSerialization.data(withJSONObject: frame)
-    udpConn?.send(content: data + Data([0x0A]), completion: .contentProcessed { _ in })
 }
 
 private struct PosePayload: Codable {
@@ -42,6 +32,12 @@ private struct PosePayload: Codable {
     let distance: Double?
     let direction: [Float]?
     let position: [Float]?
+    
+    let lat: Double?
+    let lon: Double?
+    let horizAcc: Double?
+    
+    let deviceId: String?
 }
 
 private let uwbLog = Logger(subsystem: "com.basketbuddy.app", category: "UWB")
@@ -58,6 +54,23 @@ private let myShortID: String = {
     return String(cleaned.prefix(8)).uppercased()
 }()
 
+func bearingDegrees(lat1: Double, lon1: Double,
+                    lat2: Double, lon2: Double) -> Double {
+    let φ1 = lat1 * .pi / 180
+    let φ2 = lat2 * .pi / 180
+    let λ1 = lon1 * .pi / 180
+    let λ2 = lon2 * .pi / 180
+
+    let dλ = λ2 - λ1
+
+    let y = sin(dλ) * cos(φ2)
+    let x = cos(φ1) * sin(φ2) - sin(φ1) * cos(φ2) * cos(dλ)
+
+    var θ = atan2(y, x) * 180 / .pi  // degrees
+    if θ < 0 { θ += 360 }
+    return θ  // 0=N, 90=E, etc.
+}
+
 @MainActor
 final class UWBManager: NSObject, ObservableObject {
 
@@ -65,6 +78,12 @@ final class UWBManager: NSObject, ObservableObject {
     @Published var lastDistance: Double?
     @Published var lastDirection: SIMD3<Float>?
     @Published var isRangingLive = false
+    @Published var peerLocation: CLLocation?
+    @Published var currentHeadingDeg: Double?
+
+    
+    private let locationManager = CLLocationManager()
+    private var lastLocation: CLLocation?
 
     private var session: NISession?
     private let arSession = ARSession()
@@ -77,6 +96,7 @@ final class UWBManager: NSObject, ObservableObject {
     private let serviceType = "basket-uwb"
     private let myPeerID = MCPeerID(displayName: UIDevice.current.name)
     private var mcSession: MCSession!
+    
     private var advertiser: MCNearbyServiceAdvertiser!
     private var browser: MCNearbyServiceBrowser!
 
@@ -103,10 +123,17 @@ final class UWBManager: NSObject, ObservableObject {
         super.init()
         uwbLog.info("[\(ts())][\(myShortID)] UWBManager init")
         arSession.delegate = self
+        
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.startUpdatingLocation()
+        locationManager.headingFilter = 1
+        locationManager.startUpdatingHeading()
 
         setupMultipeer()
     }
-
+    
     func start() {
         uwbLog.info("[\(ts())][\(myShortID)] start() session? \(self.session == nil ? "no" : "yes")")
         if session == nil { createSession() }
@@ -142,13 +169,8 @@ final class UWBManager: NSObject, ObservableObject {
         status = "Session created"
         
         if #available(iOS 16.0, *) {
-            if arSessionRunning {
-                s.setARSession(arSession)
-                hasAttachedAR = true
-                uwbLog.info("[\(ts())][\(myShortID)] attached existing AR session to new NI session")
-            } else {
-                hasAttachedAR = false
-            }
+            s.setARSession(arSession)
+            hasAttachedAR = true
         }
     }
 
@@ -304,6 +326,64 @@ final class UWBManager: NSObject, ObservableObject {
             self.status = "Restarted discovery"
         }
     }
+    
+    func sendPoseToComputer(distance: Double, azimuth: Double?, position: [Float]?, relativeAngle: Double?) {
+        setupUDP()
+        
+        let now = Date().timeIntervalSince1970
+        
+        var frame: [String: Any] = [
+            "t": now,
+            "deviceId": myShortID,
+            "distance": distance,
+            "azimuth": azimuth as Any,
+            "position": position as Any,
+        ]
+        
+        if let loc = lastLocation {
+            frame["lat"] = loc.coordinate.latitude
+            frame["lon"] = loc.coordinate.longitude
+            frame["horizAcc"] = loc.horizontalAccuracy
+        }
+        
+        if let rel = relativeAngle {
+            frame["relAngle"] = rel
+        }
+        
+        let data = try! JSONSerialization.data(withJSONObject: frame)
+        udpConn?.send(content: data + Data([0x0A]), completion: .contentProcessed { _ in })
+        
+    }
+    
+    private func relativeBearingToPeer(peerLat: Double, peerLon: Double) -> Double? {
+        guard let myLoc = lastLocation,
+                let heading = currentHeadingDeg else {
+            return nil
+        }
+            
+        let bearingToPeer = bearingDegrees(
+            lat1: myLoc.coordinate.latitude,
+            lon1: myLoc.coordinate.longitude,
+            lat2: peerLat,
+            lon2: peerLon
+        )
+            
+        // Smallest signed angle between bearing and heading: -180..+180
+        let diff = (bearingToPeer - heading + 540).truncatingRemainder(dividingBy: 360) - 180
+        return diff
+    }
+    
+    private func commandFromRelativeBearing(_ diff: Double) -> String {
+        if abs(diff) < 30 {
+            return "forward"
+        } else if abs(diff) > 150 {
+            return "backward"
+        } else if diff > 0 {
+            return "right"
+        } else {
+            return "left"
+        }
+    }
 
     private func sendPoseUpdate(from obj: NINearbyObject, timestamp: TimeInterval) {
         guard !mcSession.connectedPeers.isEmpty else { return }
@@ -317,11 +397,19 @@ final class UWBManager: NSObject, ObservableObject {
             posArr = [pos.x, pos.y, pos.z]
         }
 
+        let lat  = lastLocation?.coordinate.latitude
+        let lon  = lastLocation?.coordinate.longitude
+        let acc  = lastLocation?.horizontalAccuracy
+
         let payload = PosePayload(
             t: timestamp,
             distance: distanceD,
             direction: dirArr,
-            position: posArr
+            position: posArr,
+            lat: lat,
+            lon: lon,
+            horizAcc: acc,
+            deviceId: myShortID
         )
 
         do {
@@ -333,6 +421,30 @@ final class UWBManager: NSObject, ObservableObject {
     }
 }
 
+extension UWBManager: CLLocationManagerDelegate {
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let loc = locations.last else { return }
+        lastLocation = loc
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        uwbLog.error("[\(ts())][\(myShortID)] Location error: \(error.localizedDescription, privacy: .public)")
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        // trueHeading is relative to geographic north; if it's -1, fall back to magneticHeading
+        let h = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+        currentHeadingDeg = h
+        // For debugging:
+        // print("Current heading: \(h)°")
+    }
+
+    func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
+        // Let the system show calibration if needed
+        return true
+    }
+}
+
 @MainActor
 extension UWBManager: NISessionDelegate {
 
@@ -341,17 +453,22 @@ extension UWBManager: NISessionDelegate {
 
         let now = Date().timeIntervalSince1970
         if let d = obj.distance { self.lastDistance = Double(d) }
-        if let dir = obj.direction { self.lastDirection = dir }
+        if let dir = obj.direction {
+            self.lastDirection = dir
+            print("Direction from didUpdate \(obj.horizontalAngle)")
+        }
+
         self.isRangingLive = true
         
         let distStr = String(format: "%.2f", self.lastDistance ?? -1)
-        self.status = "📍 Ranging: \(distStr) m"
+        self.status = "Ranging: \(distStr) m"
 
         if now - lastPoseSentAt >= poseSendInterval {
             lastPoseSentAt = now
             sendPoseUpdate(from: obj, timestamp: now)
         }
     }
+    
 
     @available(iOS 16.0, *)
     func sessionRequiresCameraAssistance(_ session: NISession) {
@@ -452,18 +569,98 @@ extension UWBManager: MCSessionDelegate {
                 pos = "nil"
             }
             
-            sendPoseToComputer(distance: pose.distance ?? -1,
-                               azimuth: nil,
-                               position: pose.position)
+            if let lat = pose.lat, let lon = pose.lon {
+                let peerLoc = CLLocation(latitude: lat, longitude: lon)
+                Task { @MainActor in
+                    self.peerLocation = peerLoc
+                }
+            }
             
-            // sendPoseToComputer(distance: dist, azimuth: dir, position: pos)
+            let peerLatStr = pose.lat != nil ? String(format: "%.6f", pose.lat!) : "nil"
+            let peerLonStr = pose.lon != nil ? String(format: "%.6f", pose.lon!) : "nil"
+            let peerAccStr = pose.horizAcc != nil ? String(format: "%.1f m", pose.horizAcc!) : "nil"
             
-            // print("Position @\(pose.t): distance=\(dist) dir=\(dir) pos=\(pos) from \(peerID.displayName)")
-
             Task { @MainActor in
+                var myLatStr = "nil", myLonStr = "nil", myAccStr = "nil"
+                if let myLoc = self.lastLocation {
+                    myLatStr = String(format: "%.6f", myLoc.coordinate.latitude)
+                    myLonStr = String(format: "%.6f", myLoc.coordinate.longitude)
+                    myAccStr = String(format: "%.1f m", myLoc.horizontalAccuracy)
+                }
+
+                var relAngleInfo = "relAngle=nil"
+                var relAngleToSend: Double? = nil
+
+                if let peerLat = pose.lat,
+                   let peerLon = pose.lon,
+                   let diff = self.relativeBearingToPeer(peerLat: peerLat, peerLon: peerLon) {
+
+                    relAngleToSend = diff
+                    relAngleInfo = String(format: "relAngle=%.1f°", diff)
+                } else {
+                    print("### Cannot compute relative angle (missing heading or GPS)")
+                }
+
+                // send to Pi with relativeAngle
+                self.sendPoseToComputer(distance: pose.distance ?? -1,
+                                        azimuth: nil,
+                                        position: pose.position,
+                                        relativeAngle: relAngleToSend)
+
+                print("""
+                Position @\(pose.t):
+                    distance=\(dist) dir=\(dir) pos=\(pos)
+                    SELF   GPS: lat=\(myLatStr) lon=\(myLonStr) acc=\(myAccStr)
+                    PEER   GPS: lat=\(peerLatStr) lon=\(peerLonStr) acc=\(peerAccStr)
+                    \(relAngleInfo)
+                """)
+
                 self.status = "Peer: d=\(dist) pos=\(pos)"
             }
             return
+            
+//            Task { @MainActor in
+//                self.sendPoseToComputer(distance: pose.distance ?? -1,
+//                                        azimuth: nil,
+//                                        position: pose.position)
+//            }
+//                    
+//            Task { @MainActor in
+//            var myLatStr = "nil", myLonStr = "nil", myAccStr = "nil"
+//
+//            if let myLoc = self.lastLocation {
+//                myLatStr = String(format: "%.6f", myLoc.coordinate.latitude)
+//                myLonStr = String(format: "%.6f", myLoc.coordinate.longitude)
+//                myAccStr = String(format: "%.1f m", myLoc.horizontalAccuracy)
+//            }
+//
+//            print("""
+//                    Position @\(pose.t):
+//                        distance=\(dist) dir=\(dir) pos=\(pos)
+//                        SELF   GPS: lat=\(myLatStr) lon=\(myLonStr) acc=\(myAccStr)
+//                        PEER   GPS: lat=\(peerLatStr) lon=\(peerLonStr) acc=\(peerAccStr)
+//                    """)
+//
+//                    self.status = "Peer: d=\(dist) pos=\(pos)"
+//            }
+//            
+//          
+//
+////            print("Position @\(pose.t): "
+////                + "distance=\(dist) "
+////                + "dir=\(dir) "
+////                + "pos=\(pos) "
+////                + "lat=\(latStr) "
+////                + "lon=\(lonStr) "
+////                + "acc=\(accStr) "
+////                + "from \(peerID.displayName)")
+//            
+//            // sendPoseToComputer(distance: dist, azimuth: dir, position: pos)
+//            
+//            Task { @MainActor in
+//                self.status = "Peer: d=\(dist) pos=\(pos)"
+//            }
+//            return
         }
 
         Task { @MainActor in
