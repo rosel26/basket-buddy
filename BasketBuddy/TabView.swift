@@ -20,18 +20,26 @@ struct BasketItem: Identifiable {
 
 struct RootView: View {
     @State private var isConnected = false
+    @State private var roleChosen = false
+    @StateObject private var uwb = UWBManager()
 
     var body: some View {
-        if isConnected {
+        if isConnected && roleChosen{
             MainTabView()
-        } else {
+                .environmentObject(uwb)
+        }
+        else if isConnected {
+            FollowingRoleView(roleChosen: $roleChosen)
+                .environmentObject(uwb)
+        }
+        else {
             WelcomeView(isConnected: $isConnected)
         }
     }
 }
 
 struct MainTabView: View {
-    @StateObject private var uwb = UWBManager()
+    @EnvironmentObject var uwb: UWBManager
 
     var body: some View {
         TabView {
@@ -41,6 +49,7 @@ struct MainTabView: View {
                     Image(systemName: "house")
                     Text("Home")
                 }
+                .environmentObject(uwb)
             // Basket Contents
             BasketView()
                 .tabItem {
@@ -90,10 +99,65 @@ struct WelcomeView: View {
     }
 }
 
-struct CartControlView: View {
+struct FollowingRoleView: View {
+    @Binding var roleChosen: Bool
+    @EnvironmentObject var uwb: UWBManager
+    // @StateObject private var uwb = UWBManager()
+        
     var body: some View {
         VStack(spacing: 40) {
-            Text("Your cart is active")
+            Text("Select Device Role")
+                .font(.headline)
+                .padding(.top, 20)
+            
+            Button(action: {
+                uwb.role = .shopper
+                roleChosen = true
+            }) {
+                Text("Shopper")
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(width: 200, height: 60)
+                    .background(Color.accentColor)
+                    .cornerRadius(12)
+            }
+            
+            Button(action: {
+                uwb.role = .cartLeft
+                roleChosen = true
+            }) {
+                Text("Cart Left")
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(width: 200, height: 60)
+                    .background(Color.accentColor)
+                    .cornerRadius(12)
+            }
+            
+            Button(action: {
+                uwb.role = .cartRight
+                roleChosen = true
+            }) {
+                Text("Cart Right")
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(width: 200, height: 60)
+                    .background(Color.accentColor)
+                    .cornerRadius(12)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+    }
+}
+
+
+struct CartControlView: View {
+    @EnvironmentObject var uwb: UWBManager
+    
+    var body: some View {
+        VStack(spacing: 40) {
+            Text("Your cart is active (\(uwb.role.rawValue))")
                 .font(.headline)
                 .padding(.top, 20)
             

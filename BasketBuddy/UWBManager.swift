@@ -14,8 +14,13 @@ import ARKit
 import Network
 import CoreLocation
 
-
 private var udpConn: NWConnection?
+
+enum FollowingRole: String, Codable {
+    case shopper
+    case cartLeft
+    case cartRight
+}
 
 func setupUDP() {
     if udpConn != nil { return }
@@ -100,12 +105,14 @@ final class UWBManager: NSObject, ObservableObject {
     private var browser: MCNearbyServiceBrowser!
 
     private var lastPoseSentAt: TimeInterval = 0
-    private let poseSendInterval: TimeInterval = 1  // 5 Hz
+    private let poseSendInterval: TimeInterval = 1
 
     private var peerDiscoveryToken: NIDiscoveryToken?
     private var lastPeerTokenBlob: Data?
 
     private var niRestartWorkItem: DispatchWorkItem?
+    
+    @Published var role: FollowingRole = .shopper
     
 //    private var lastUpdateTimestamp: TimeInterval = 0
 //    private var updateCount: Int = 0
