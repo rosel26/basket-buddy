@@ -79,6 +79,7 @@ final class UWBManager: NSObject, ObservableObject {
     @Published var isRangingLive = false
     @Published var peerLocation: CLLocation?
     @Published var currentHeadingDeg: Double?
+    @Published var isReady = false
     
     private let locationManager = CLLocationManager()
     private var lastLocation: CLLocation?
@@ -121,7 +122,8 @@ final class UWBManager: NSObject, ObservableObject {
         locationManager.startUpdatingLocation()
         locationManager.headingFilter = 1
         locationManager.startUpdatingHeading()
-
+        
+        createSession()
         setupMultipeer()
     }
     

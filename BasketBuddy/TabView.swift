@@ -31,6 +31,8 @@ struct RootView: View {
 }
 
 struct MainTabView: View {
+    @StateObject private var uwb = UWBManager()
+
     var body: some View {
         TabView {
             // Home/Cart Control
@@ -51,7 +53,6 @@ struct MainTabView: View {
 
 struct WelcomeView: View {
     @Binding var isConnected: Bool
-    @StateObject private var uwb = UWBManager()
     @State private var isConnecting = false
 
     var body: some View {
@@ -68,22 +69,16 @@ struct WelcomeView: View {
                 .multilineTextAlignment(.center)
                 .bold()
 
-            Text("THE next generation’s\nshopping cart")
+            Text("the next generation’s\nshopping cart")
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
 
             Spacer()
 
-//            Button("Connect") {
-//                uwb.start()
-//                isConnected = true
-//            }
-            
-            Button(isConnecting ? "Connecting…" : "Connect") {
-                guard !isConnecting else { return }
-                isConnecting = true
-                uwb.start()
+            Button("Connect") {
+                isConnected = true
             }
+            
             .font(.headline)
             .frame(width: 180, height: 50)
             .background(Color.accentColor)
@@ -282,17 +277,6 @@ struct BasketView: View {
                     }
                 }
             }
-        }.resume()
-    }
-}
-
-struct SettingView: View {
-    var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
         }
         .padding()
         .sheet(isPresented: $showCheckoutImage) {
