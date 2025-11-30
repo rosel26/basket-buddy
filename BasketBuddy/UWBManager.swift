@@ -11,7 +11,6 @@ import Combine
 import UIKit
 import OSLog
 import ARKit
-import AVFoundation
 import Network
 import CoreLocation
 
@@ -20,7 +19,7 @@ private var udpConn: NWConnection?
 
 func setupUDP() {
     if udpConn != nil { return }
-    let host = NWEndpoint.Host("")
+    let host = NWEndpoint.Host("172.20.10.8")
     let port = NWEndpoint.Port("5555")!
     let conn = NWConnection(host: host, port: port, using: .udp)
     conn.start(queue: .global())
@@ -66,7 +65,7 @@ func bearingDegrees(lat1: Double, lon1: Double,
     let y = sin(dλ) * cos(φ2)
     let x = cos(φ1) * sin(φ2) - sin(φ1) * cos(φ2) * cos(dλ)
 
-    var θ = atan2(y, x) * 180 / .pi  // degrees
+    var θ = atan2(y, x) * 180 / .pi
     if θ < 0 { θ += 360 }
     return θ
 }
@@ -80,7 +79,6 @@ final class UWBManager: NSObject, ObservableObject {
     @Published var isRangingLive = false
     @Published var peerLocation: CLLocation?
     @Published var currentHeadingDeg: Double?
-
     
     private let locationManager = CLLocationManager()
     private var lastLocation: CLLocation?
@@ -108,16 +106,9 @@ final class UWBManager: NSObject, ObservableObject {
 
     private var niRestartWorkItem: DispatchWorkItem?
     
-    private func ensureCameraAuthorized(_ done: @escaping (Bool) -> Void) {
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
-        case .authorized: done(true)
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { granted in
-                DispatchQueue.main.async { done(granted) }
-            }
-        default: done(false)
-        }
-    }
+//    private var lastUpdateTimestamp: TimeInterval = 0
+//    private var updateCount: Int = 0
+//    private var lastRatePrint: TimeInterval = 0
 
     override init() {
         super.init()
@@ -327,7 +318,7 @@ final class UWBManager: NSObject, ObservableObject {
         }
     }
     
-    func sendPoseToComputer(distance: Double, azimuth: Double?, position: [Float]?, relativeAngle: Double?) {
+    func sendPoseToComputer(distance: Double, position: [Float]?, relativeAngle: Double?) {
         setupUDP()
         
         let now = Date().timeIntervalSince1970
@@ -336,7 +327,6 @@ final class UWBManager: NSObject, ObservableObject {
             "t": now,
             "deviceId": myShortID,
             "distance": distance,
-            "azimuth": azimuth as Any,
             "position": position as Any,
         ]
         
@@ -370,18 +360,6 @@ final class UWBManager: NSObject, ObservableObject {
             
         let diff = (bearingToPeer - heading + 540).truncatingRemainder(dividingBy: 360) - 180
         return diff
-    }
-    
-    private func commandFromRelativeBearing(_ diff: Double) -> String {
-        if abs(diff) < 30 {
-            return "forward"
-        } else if abs(diff) > 150 {
-            return "backward"
-        } else if diff > 0 {
-            return "right"
-        } else {
-            return "left"
-        }
     }
 
     private func sendPoseUpdate(from obj: NINearbyObject, timestamp: TimeInterval) {
@@ -431,15 +409,11 @@ extension UWBManager: CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
-        // trueHeading is relative to geographic north; if it's -1, fall back to magneticHeading
         let h = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
         currentHeadingDeg = h
-        // For debugging:
-        // print("Current heading: \(h)°")
     }
 
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
-        // Let the system show calibration if needed
         return true
     }
 }
@@ -448,6 +422,29 @@ extension UWBManager: CLLocationManagerDelegate {
 extension UWBManager: NISessionDelegate {
 
     func session(_ session: NISession, didUpdate nearbyObjects: [NINearbyObject]) {
+        
+        // Getting data stream rate
+        
+//        let now1 = CACurrentMediaTime()
+//
+//        if lastUpdateTimestamp == 0 {
+//            lastUpdateTimestamp = now1
+//            lastRatePrint = now1
+//        } else {
+//            updateCount += 1
+//            
+//            let dt = now1 - lastUpdateTimestamp
+//            let instRate = 1.0 / dt
+//            print(String(format: "NI Instant rate: %.1f Hz (dt=%.4f)", instRate, dt))
+//            lastUpdateTimestamp = now1
+//        }
+//
+//        if now1 - lastRatePrint >= 1.0 {
+//            print("NI avg rate over past second: \(updateCount) Hz")
+//            updateCount = 0
+//            lastRatePrint = now1
+//        }
+        
         guard let obj = nearbyObjects.first else { return }
 
         let now = Date().timeIntervalSince1970
@@ -467,7 +464,6 @@ extension UWBManager: NISessionDelegate {
             sendPoseUpdate(from: obj, timestamp: now)
         }
     }
-    
 
     @available(iOS 16.0, *)
     func sessionRequiresCameraAssistance(_ session: NISession) {
@@ -495,7 +491,6 @@ extension UWBManager: NISessionDelegate {
         niRestartWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
-
 
     func sessionWasSuspended(_ session: NISession) {
         uwbLog.info("[\(ts())][\(myShortID)] NI suspended")
@@ -567,7 +562,7 @@ extension UWBManager: MCSessionDelegate {
             } else {
                 pos = "nil"
             }
-            
+    
             if let lat = pose.lat, let lon = pose.lon {
                 let peerLoc = CLLocation(latitude: lat, longitude: lon)
                 Task { @MainActor in
@@ -581,6 +576,7 @@ extension UWBManager: MCSessionDelegate {
             
             Task { @MainActor in
                 var myLatStr = "nil", myLonStr = "nil", myAccStr = "nil"
+
                 if let myLoc = self.lastLocation {
                     myLatStr = String(format: "%.6f", myLoc.coordinate.latitude)
                     myLonStr = String(format: "%.6f", myLoc.coordinate.longitude)
@@ -597,13 +593,10 @@ extension UWBManager: MCSessionDelegate {
                     relAngleToSend = diff
                     relAngleInfo = String(format: "relAngle=%.1f°", diff)
                 } else {
-                    print("### Cannot compute relative angle (missing heading or GPS)")
+                    print("Cannot compute relative angle (missing heading or GPS)")
                 }
 
-                self.sendPoseToComputer(distance: pose.distance ?? -1,
-                                        azimuth: nil,
-                                        position: pose.position,
-                                        relativeAngle: relAngleToSend)
+                self.sendPoseToComputer(distance: pose.distance ?? -1, position: pose.position, relativeAngle: relAngleToSend)
 
                 print("""
                 Position @\(pose.t):
