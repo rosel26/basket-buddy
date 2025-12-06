@@ -112,6 +112,8 @@ struct FollowingRoleView: View {
             
             Button(action: {
                 uwb.role = .shopper
+                uwb.startForCurrentRole()
+                uwb.sendMyRoleToPeers()
                 roleChosen = true
             }) {
                 Text("Shopper")
@@ -124,6 +126,8 @@ struct FollowingRoleView: View {
             
             Button(action: {
                 uwb.role = .cartLeft
+                uwb.startForCurrentRole()
+                uwb.sendMyRoleToPeers()
                 roleChosen = true
             }) {
                 Text("Cart Left")
@@ -136,6 +140,8 @@ struct FollowingRoleView: View {
             
             Button(action: {
                 uwb.role = .cartRight
+                uwb.startForCurrentRole()
+                uwb.sendMyRoleToPeers()
                 roleChosen = true
             }) {
                 Text("Cart Right")

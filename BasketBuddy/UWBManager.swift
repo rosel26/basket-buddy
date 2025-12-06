@@ -10,7 +10,6 @@ import MultipeerConnectivity
 import Combine
 import UIKit
 import OSLog
-import ARKit
 import Network
 
 private var udpConn: NWConnection?
@@ -23,8 +22,7 @@ enum FollowingRole: String, Codable {
 
 func setupUDP() {
     if udpConn != nil { return }
-    // let host = NWEndpoint.Host("172.20.10.8")
-    let host = NWEndpoint.Host("172.26.94.205")
+    let host = NWEndpoint.Host("172.20.10.8")
 
     let port = NWEndpoint.Port("5555")!
     let conn = NWConnection(host: host, port: port, using: .udp)
@@ -38,6 +36,7 @@ private struct PosePayload: Codable {
     let direction: [Float]?
     let position: [Float]?
     let deviceId: String?
+    let role: FollowingRole?
 }
 
 private let uwbLog = Logger(subsystem: "com.basketbuddy.app", category: "UWB")
@@ -65,14 +64,6 @@ final class UWBManager: NSObject, ObservableObject {
     
     @Published var role: FollowingRole = .shopper
 
-    private var session: NISession?
-    private let arSession = ARSession()
-    private var arSessionRunning = false
-    private var hasAttachedAR = false
-    private var isRunningNI = false
-    private var isARInitializing = false
-    private var arTrackingIsGood = false  // if AR has good tracking
-
     private let serviceType = "basket-uwb"
     private let myPeerID = MCPeerID(displayName: UIDevice.current.name)
     private var mcSession: MCSession!
@@ -82,198 +73,196 @@ final class UWBManager: NSObject, ObservableObject {
 
     private var lastPoseSentAt: TimeInterval = 0
     private let poseSendInterval: TimeInterval = 0.2 // 5 Hz
+    
+    // Multi-peer NI
+    private var niSessions: [MCPeerID: NISession] = [:]
+    private var peerTokens: [MCPeerID: NIDiscoveryToken] = [:]
+    private var peerForSession: [ObjectIdentifier: MCPeerID] = [:]
+    
+    private var peerRoles: [MCPeerID: FollowingRole] = [:]
 
-    private var peerDiscoveryToken: NIDiscoveryToken?
-    private var lastPeerTokenBlob: Data?
 
     private var niRestartWorkItem: DispatchWorkItem?
     
-//    private var lastUpdateTimestamp: TimeInterval = 0
-//    private var updateCount: Int = 0
-//    private var lastRatePrint: TimeInterval = 0
-
     override init() {
         super.init()
         uwbLog.info("[\(ts())][\(myShortID)] UWBManager init")
-        arSession.delegate = self
+        // setupMultipeer()
+
+    }
+    
+    func sendMyRoleToPeers() {
+        guard !mcSession.connectedPeers.isEmpty else { return }
+        let payload = ["role": role.rawValue]
+
+        if let data = try? JSONSerialization.data(withJSONObject: payload) {
+            try? mcSession.send(data, toPeers: mcSession.connectedPeers, with: .reliable)
+            uwbLog.info("[\(ts())][\(myShortID)] Sent my role \(self.role.rawValue) to peers")
+        }
+    }
+    
+    
+    func startForCurrentRole() {
+        if isReady {
+            uwbLog.info("[\(ts())][\(myShortID)] startForCurrentRole() called but already ready")
+            return
+        }
+
+        uwbLog.info("[\(ts())][\(myShortID)] Starting for role \(self.role.rawValue)")
         
-        createSession()
         setupMultipeer()
+        
+        isReady = true
     }
     
     func start() {
-        uwbLog.info("[\(ts())][\(myShortID)] start() session? \(self.session == nil ? "no" : "yes")")
-        if session == nil { createSession() }
+        uwbLog.info("[\(ts())][\(myShortID)] start() called")
         status = "Starting…"
         
-        if #available(iOS 16.0, *) {
-            ensureARSessionRunning()
-        }
-        
-        sendMyDiscoveryTokenIfPossible()
     }
 
     func stop() {
-        session?.invalidate()
-        session = nil
-        hasAttachedAR = false
-        isRunningNI = false
-
-        if arSessionRunning {
-            arSession.pause()
-            arSessionRunning = false
-        }
+        for (_, s) in niSessions {
+                s.invalidate()
+            }
+        niSessions.removeAll()
+        peerForSession.removeAll()
+        peerTokens.removeAll()
 
         status = "Stopped"
     }
-
-    private func createSession() {
-        uwbLog.info("[\(ts())][\(myShortID)] createSession()")
-        let s = NISession()
-        s.delegate = self
-        session = s
-        isRunningNI = false
-        status = "Session created"
-        
-        if #available(iOS 16.0, *) {
-            s.setARSession(arSession)
-            hasAttachedAR = true
+    
+    @MainActor
+    private func setupNISessionForPeerIfNeeded(_ peerID: MCPeerID) {
+        if niSessions[peerID] != nil {
+            return // already set up
         }
-    }
 
-    private func setupMultipeer() {
-        mcSession = MCSession(peer: myPeerID, securityIdentity: nil, encryptionPreference: .required)
-        mcSession.delegate = self
+        let session = NISession()
+        session.delegate = self
 
-        advertiser = MCNearbyServiceAdvertiser(peer: myPeerID, discoveryInfo: nil, serviceType: serviceType)
-        advertiser.delegate = self
-        advertiser.startAdvertisingPeer()
+        niSessions[peerID] = session
+        peerForSession[ObjectIdentifier(session)] = peerID
 
-        browser = MCNearbyServiceBrowser(peer: myPeerID, serviceType: serviceType)
-        browser.delegate = self
-        browser.startBrowsingForPeers()
-        uwbLog.info("[\(ts())][\(myShortID)] MC setup: advertising + browsing")
+        guard let token = session.discoveryToken else {
+            uwbLog.error("[\(ts())][\(myShortID)] No discoveryToken for peer \(peerID.displayName)")
+            return
+        }
 
-        status = "Advertising & browsing"
+        do {
+            let data = try NSKeyedArchiver.archivedData(
+                withRootObject: token,
+                requiringSecureCoding: true
+            )
+            try mcSession.send(data, toPeers: [peerID], with: .reliable)
+            uwbLog.info("[\(ts())][\(myShortID)] Sent discovery token to \(peerID.displayName)")
+        } catch {
+            uwbLog.error("[\(ts())][\(myShortID)] Failed to send token to \(peerID.displayName): \(error.localizedDescription)")
+        }
     }
     
-    private func ensureARSessionRunning() {
-        guard !arSessionRunning && !isARInitializing else { return }
+    private func setupMultipeer() {
+            mcSession = MCSession(peer: myPeerID, securityIdentity: nil, encryptionPreference: .required)
+            mcSession.delegate = self
 
-        isARInitializing = true
-        arTrackingIsGood = false
-        uwbLog.info("[\(ts())][\(myShortID)] Starting AR session...")
+            let discoveryInfo = ["role": role.rawValue]
 
-        let config = ARWorldTrackingConfiguration()
+            advertiser = MCNearbyServiceAdvertiser(peer: myPeerID,
+                                                   discoveryInfo: discoveryInfo,
+                                                   serviceType: serviceType)
+            advertiser.delegate = self
+            advertiser.startAdvertisingPeer()
+
+            switch role {
+            case .shopper:
+                // Shopper advertises and browses
+                browser = MCNearbyServiceBrowser(peer: myPeerID, serviceType: serviceType)
+                browser?.delegate = self
+                browser?.startBrowsingForPeers()
+                uwbLog.info("[\(ts())][\(myShortID)] MC setup (shopper): advertising + browsing")
+                status = "Advertising & browsing"
+
+            case .cartLeft, .cartRight:
+                // Carts only advertise (no browsing → carts won't find carts)
+                browser = nil
+                uwbLog.info("[\(ts())][\(myShortID)] MC setup (cart): advertising only")
+                status = "Advertising"
+            }
+        }
+
+    @MainActor
+    private func handleReceivedPeerToken(_ data: Data, from peerID: MCPeerID) {
         
-        config.worldAlignment = .gravity
-        config.isCollaborationEnabled = false
-        config.initialWorldMap = nil
+        if role == .cartLeft || role == .cartRight {
+                if let remoteRole = peerRoles[peerID] {
+                    // We know their role
+                    print(remoteRole)
+                    guard remoteRole == .shopper else {
+                        uwbLog.info("[\(ts())][\(myShortID)] Ignoring token from non-shopper \(peerID.displayName) (role=\(remoteRole.rawValue))")
+                        return
+                    }
+                } else {
+                    // We DON'T know their role yet → allow for now.
+                    uwbLog.info("[\(ts())][\(myShortID)] No known role for \(peerID.displayName) yet, accepting token for now")
+                }
+            }
         
-        if #available(iOS 16.0, *) {
-            config.frameSemantics = []
-        }
 
-        arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
-        arSessionRunning = true
-        isARInitializing = false
-        uwbLog.info("[\(ts())][\(myShortID)] AR session started, waiting for good tracking...")
-    }
-
-    private func sendMyDiscoveryTokenIfPossible() {
-        guard let s = session, let token = s.discoveryToken else {
-            uwbLog.info("[\(ts())][\(myShortID)] No token to send yet")
-            return
-        }
-        guard !mcSession.connectedPeers.isEmpty else {
-            uwbLog.info("[\(ts())][\(myShortID)] No connected peers to send token to")
-            return
-        }
         do {
-            let peerNames = mcSession.connectedPeers.map { $0.displayName }.joined(separator: ",")
-            uwbLog.info("[\(ts())][\(myShortID)] Sending token to peers: \(peerNames)")
-            let data = try NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true)
-            try mcSession.send(data, toPeers: mcSession.connectedPeers, with: .reliable)
-            self.status = "Sent discovery token to \(peerNames)"
-            uwbLog.info("[\(ts())][\(myShortID)] Token sent successfully (\(data.count) bytes)")
-        } catch {
-            uwbLog.error("[\(ts())][\(myShortID)] Token send failed: \(error.localizedDescription)")
-            self.status = "Send failed: \(error.localizedDescription)"
-        }
-    }
+            uwbLog.info("[\(ts())][\(myShortID)] received peer token bytes=\(data.count) from \(peerID.displayName)")
 
-    private func handleReceivedPeerToken(_ data: Data) {
-        Task { @MainActor in
-            if data == lastPeerTokenBlob { return }
-            
-            do {
-                uwbLog.info("[\(ts())][\(myShortID)] received peer token bytes=\(data.count)")
-                let token = try NSKeyedUnarchiver.unarchivedObject(ofClass: NIDiscoveryToken.self, from: data)
-                
-                if let myToken = session?.discoveryToken {
-                    let myData = try? NSKeyedArchiver.archivedData(withRootObject: myToken, requiringSecureCoding: true)
+            guard let token = try NSKeyedUnarchiver.unarchivedObject(
+                ofClass: NIDiscoveryToken.self,
+                from: data
+            ) else {
+                uwbLog.error("[\(ts())][\(myShortID)] Failed to decode NIDiscoveryToken from \(peerID.displayName)")
+                return
+            }
+
+            // OPTIONAL: ignore our own tokens (in case we ever accidentally send to ourselves)
+            for (_, mySession) in niSessions {
+                if let myToken = mySession.discoveryToken {
+                    let myData = try? NSKeyedArchiver.archivedData(
+                        withRootObject: myToken,
+                        requiringSecureCoding: true
+                    )
                     if myData == data {
-                        uwbLog.warning("[\(ts())][\(myShortID)] Received own token")
+                        uwbLog.warning("[\(ts())][\(myShortID)] Received our own token back from \(peerID.displayName)")
                         status = "Can't range with self"
                         return
                     }
                 }
-                
-                lastPeerTokenBlob = data
-                peerDiscoveryToken = token
-                status = "Got peer token — waiting for AR"
-                uwbLog.info("[\(ts())][\(myShortID)] Peer token accepted, will start ranging")
-                
-                if #available(iOS 16.0, *) {
-                    if !arSessionRunning && !isARInitializing {
-                        ensureARSessionRunning()
-                    } else if arSessionRunning {
-                        startRangingIfPossible()
-                    }
-                } else {
-                    startRangingIfPossible()
-                }
-            } catch {
-                status = "Failed to decode peer token: \(error.localizedDescription)"
             }
+
+            // Store this peer's token
+            peerTokens[peerID] = token
+
+            uwbLog.info("[\(ts())][\(myShortID)] Peer token accepted from \(peerID.displayName), starting ranging")
+            status = "Got peer token from \(peerID.displayName)"
+
+            // Start or restart a dedicated session for this peer
+            startRanging(with: peerID, token: token)
+
+        } catch {
+            status = "Failed to decode peer token: \(error.localizedDescription)"
+            uwbLog.error("[\(ts())][\(myShortID)] Failed to decode peer token: \(error.localizedDescription)")
         }
     }
 
-    private func startRangingIfPossible() {
-        guard let s = session else {
-            createSession()
-            return
-        }
-        guard let peer = peerDiscoveryToken else { return }
-        guard !isRunningNI else { return }
 
-        if #available(iOS 16.0, *) {
-            guard arSessionRunning else {
-                uwbLog.info("[\(ts())][\(myShortID)] Waiting for AR session to start...")
-                return
-            }
-            
-            guard arTrackingIsGood else {
-                uwbLog.info("[\(ts())][\(myShortID)] Waiting for AR tracking to be good...")
-                return
-            }
-            
-            if !hasAttachedAR {
-                s.setARSession(arSession)
-                hasAttachedAR = true
-                uwbLog.info("[\(ts())][\(myShortID)] attached ARSession to NISession")
-            }
+    @MainActor
+    private func startRanging(with peerID: MCPeerID, token: NIDiscoveryToken) {
+        
+        guard let session = niSessions[peerID] else {
+               uwbLog.error("[\(ts())][\(myShortID)] No NISession for peer \(peerID.displayName) when starting ranging")
+               return
         }
 
-        let cfg = NINearbyPeerConfiguration(peerToken: peer)
-        if #available(iOS 16.0, *) {
-            cfg.isCameraAssistanceEnabled = true
-        }
+        let cfg = NINearbyPeerConfiguration(peerToken: token)
+        session.run(cfg)
 
-        s.run(cfg)
-        isRunningNI = true
-        uwbLog.info("[\(ts())][\(myShortID)] running NI with peer token")
-        status = "Ranging…"
+        uwbLog.info("[\(ts())][\(myShortID)] Running NI with peer \(peerID.displayName)")
+        status = "Ranging with \(peerID.displayName)…"
     }
 
     private func restartDiscovery() {
@@ -289,7 +278,7 @@ final class UWBManager: NSObject, ObservableObject {
         }
     }
     
-    func sendPoseToComputer(distance: Double, position: [Float]?) {
+    func sendPoseToComputer(distance: Double) {
         guard role == .cartLeft || role == .cartRight else {
             return
         }
@@ -302,7 +291,6 @@ final class UWBManager: NSObject, ObservableObject {
             "t": now,
             "deviceId": myShortID,
             "distance": distance,
-            "position": position as Any,
             "role": role.rawValue
         ]
         
@@ -312,7 +300,7 @@ final class UWBManager: NSObject, ObservableObject {
 
     private func sendPoseUpdate(from obj: NINearbyObject, timestamp: TimeInterval) {
         guard !mcSession.connectedPeers.isEmpty else { return }
-
+        
         let distanceD: Double? = obj.distance.map(Double.init)
         let dirArr: [Float]? = obj.direction.map { [$0.x, $0.y, $0.z] }
 
@@ -327,7 +315,8 @@ final class UWBManager: NSObject, ObservableObject {
             distance: distanceD,
             direction: dirArr,
             position: posArr,
-            deviceId: myShortID
+            deviceId: myShortID,
+            role: role
         )
 
         do {
@@ -344,40 +333,42 @@ extension UWBManager: NISessionDelegate {
 
     func session(_ session: NISession, didUpdate nearbyObjects: [NINearbyObject]) {
         
-        // Getting data stream rate
-        
-//        let now1 = CACurrentMediaTime()
-//
-//        if lastUpdateTimestamp == 0 {
-//            lastUpdateTimestamp = now1
-//            lastRatePrint = now1
-//        } else {
-//            updateCount += 1
-//            
-//            let dt = now1 - lastUpdateTimestamp
-//            let instRate = 1.0 / dt
-//            print(String(format: "NI Instant rate: %.1f Hz (dt=%.4f)", instRate, dt))
-//            lastUpdateTimestamp = now1
-//        }
-//
-//        if now1 - lastRatePrint >= 1.0 {
-//            print("NI avg rate over past second: \(updateCount) Hz")
-//            updateCount = 0
-//            lastRatePrint = now1
-//        }
-        
-        guard let obj = nearbyObjects.first else { return }
+        guard let obj = nearbyObjects.first,
+                      let dist = obj.distance else { return }
 
+        // Figure out which peer this session belongs to
+        let key = ObjectIdentifier(session)
+        let peerID = peerForSession[key]
         let now = Date().timeIntervalSince1970
-        if let d = obj.distance { self.lastDistance = Double(d) }
-        if let dir = obj.direction {
-            self.lastDirection = dir
-            print("Direction from didUpdate \(obj.horizontalAngle)")
+
+//        if let d = obj.distance{
+//            self.lastDistance = Double(d)
+//        }
+                
+        let remoteRole = peerID.flatMap { peerRoles[$0] } ?? .shopper
+
+        let roleLabel: String
+            switch remoteRole {
+            case .cartLeft:  roleLabel = "LEFT"
+            case .cartRight: roleLabel = "RIGHT"
+            case .shopper:   roleLabel = "SHOPPER"
         }
 
+        // Update UI-ish state
+        self.lastDistance = Double(dist)
         self.isRangingLive = true
+        let distStr = String(format: "%.2f", dist)
+        self.status = "Ranging: \(distStr) m"
+
+        print("""
+                Position @\(now):
+                    distance=\(distStr) from \(roleLabel)
+                """)
         
-        let distStr = String(format: "%.2f", self.lastDistance ?? -1)
+        self.sendPoseToComputer(distance: Double(dist))
+        
+        self.isRangingLive = true
+
         self.status = "Ranging: \(distStr) m"
 
         if now - lastPoseSentAt >= poseSendInterval {
@@ -386,31 +377,22 @@ extension UWBManager: NISessionDelegate {
         }
     }
 
-    @available(iOS 16.0, *)
-    func sessionRequiresCameraAssistance(_ session: NISession) {
-        uwbLog.info("[\(ts())][\(myShortID)] sessionRequiresCameraAssistance called")
-        ensureARSessionRunning()
-    }
-
     func session(_ session: NISession, didInvalidateWith error: Error) {
         uwbLog.error("[\(ts())][\(myShortID)] NI invalidated error=\(error.localizedDescription, privacy: .public)")
         self.status = "Session invalidated: \(error.localizedDescription)"
         self.isRangingLive = false
 
-        self.isRunningNI = false
-        self.hasAttachedAR = false
+        let key = ObjectIdentifier(session)
+        if let peerID = peerForSession[key] {
+            uwbLog.info("[\(ts())][\(myShortID)] Cleaning up NI session for peer \(peerID.displayName)")
+            niSessions[peerID] = nil
+            peerForSession[key] = nil
 
-        niRestartWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            Task { @MainActor in
-                self.createSession()
-                self.sendMyDiscoveryTokenIfPossible()
-                self.startRangingIfPossible()
+            if let token = peerTokens[peerID] {
+                uwbLog.info("[\(ts())][\(myShortID)] Restarting NI for peer \(peerID.displayName)")
+                startRanging(with: peerID, token: token)
             }
         }
-        niRestartWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
     func sessionWasSuspended(_ session: NISession) {
@@ -421,33 +403,12 @@ extension UWBManager: NISessionDelegate {
     func sessionSuspensionEnded(_ session: NISession) {
         uwbLog.info("[\(ts())][\(myShortID)] NI suspension ended — rerun")
         self.status = "Session resumed"
-        self.startRangingIfPossible()
-    }
-}
 
-@MainActor
-extension UWBManager: ARSessionDelegate {
-    func sessionShouldAttemptRelocalization(_ session: ARSession) -> Bool { false }
-
-    func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
-        switch camera.trackingState {
-        case .notAvailable:
-            uwbLog.info("[\(ts())][\(myShortID)] AR tracking: notAvailable")
-            arTrackingIsGood = false
-        case .limited(let reason):
-            uwbLog.info("[\(ts())][\(myShortID)] AR tracking: limited \(String(describing: reason))")
-        case .normal:
-            uwbLog.info("[\(ts())][\(myShortID)] AR tracking: normal")
-            arTrackingIsGood = true
-            startRangingIfPossible()
+        let key = ObjectIdentifier(session)
+        if let peerID = peerForSession[key],
+           let token = peerTokens[peerID] {
+            startRanging(with: peerID, token: token)
         }
-    }
-
-    func session(_ session: ARSession, didFailWithError error: Error) {
-        uwbLog.error("[\(ts())][\(myShortID)] ARSession failed: \(error.localizedDescription, privacy: .public)")
-        arSessionRunning = false
-        isARInitializing = false
-        arTrackingIsGood = false
     }
 }
 
@@ -459,8 +420,9 @@ extension UWBManager: MCSessionDelegate {
             case .connected:
                 uwbLog.info("[\(ts())][\(myShortID)] MC connected to: \(peerName)")
                 self.status = "Connected to \(peerName)"
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                self.sendMyDiscoveryTokenIfPossible()
+                self.setupNISessionForPeerIfNeeded(peerID)
+                self.sendMyRoleToPeers()
+
             case .connecting:
                 uwbLog.info("[\(ts())][\(myShortID)] MC connecting to: \(peerName)")
                 self.status = "Connecting to \(peerName)…"
@@ -472,34 +434,21 @@ extension UWBManager: MCSessionDelegate {
             }
         }
     }
-
+    
     nonisolated func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        if let pose = try? JSONDecoder().decode(PosePayload.self, from: data) {
-            let dist = pose.distance.map { String(format: "%.2f m", $0) } ?? "nil"
-            let dir  = pose.direction.map { String(format: "[%.3f, %.3f, %.3f]", $0[0], $0[1], $0[2]) } ?? "nil"
-            
+
+        if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let roleStr = dict["role"] as? String,
+           let role = FollowingRole(rawValue: roleStr) {
+
             Task { @MainActor in
-                self.sendPoseToComputer(
-                    distance: pose.distance ?? -1,
-                    position: pose.position
-                )
-
-                let dist = pose.distance.map { String(format: "%.2f m", $0) } ?? "nil"
-                let dir  = pose.direction.map { "[\($0[0]),\($0[1]),\($0[2])]" } ?? "nil"
-                let pos  = pose.position.map { "[\($0[0]),\($0[1]),\($0[2])]" } ?? "nil"
-
-                print("""
-                Position @\(pose.t):
-                    distance=\(dist) dir=\(dir) pos=\(pos)
-                """)
-
-                self.status = "Peer: d=\(dist) pos=\(pos)"
+                peerRoles[peerID] = role
             }
             return
         }
 
         Task { @MainActor in
-            self.handleReceivedPeerToken(data)
+            self.handleReceivedPeerToken(data, from: peerID)
         }
     }
 
