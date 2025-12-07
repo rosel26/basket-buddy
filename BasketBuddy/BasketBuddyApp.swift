@@ -38,29 +38,49 @@ struct BasketBuddyApp: App {
             
             // Create product
             let product1 = Product(context: context)
-            product1.name = "Ben & Jerry's Half Baked Chocolate & Vanilla Ice Cream Pint Non-GMO 16 oz"
-            product1.barcode = "0076840101320"
-            product1.price = 5.69
+            product1.name = "Rold Gold Pretzels, Original Sticks Flavored, 16 Oz"
+            product1.barcode = "0028400047708"
+            product1.price = 3.99
             
             let product2 = Product(context: context)
-            product2.name = "Good Culture Organic Classic Cottage Cheese, 16 oz"
-            product2.barcode = "0859977005064"
-            product2.price = 6.29
+            product2.name = "Del Monte Kernel Corn, Whole, Fresh Cut - 15.25 Ounce"
+            product2.barcode = "0024000163022"
+            product2.price = 1.19
             
             let product3 = Product(context: context)
-            product3.name = "365 By Whole Foods Market, Potato Chips Rippled Sea Salt - Party Size, 13 Ounce"
-            product3.barcode = "0099482535223"
-            product3.price = 3.99
+            product3.name = "Jif Extra Crunchy Peanut Butter, 16-Ounce Jar"
+            product3.barcode = "0051500255377"
+            product3.price = 4.49
             
             let product4 = Product(context: context)
-            product4.name = "365 by Whole Foods Market, Organic Whole Milk, 64 oz"
-            product4.barcode = "0099482165413"
-            product4.price = 4.59
+            product4.name = "Garofalo Gemelli Dry Pasta 500g"
+            product4.barcode = "0021511362142"
+            product4.price = 2.99
             
             let product5 = Product(context: context)
-            product5.name = "Chobani® Whole Milk Plain Greek Yogurt 32oz"
-            product5.barcode = "0894700010434"
-            product5.price = 6.49
+            product5.name = "Nissin Top Ramen Noodle Soup Chicken Flavor 3 Ounce"
+            product5.barcode = "0070662010037"
+            product5.price = 0.99
+
+            let product6 = Product(context: context)
+            product6.name = "Campbell's Chunky Soup, Ready to Serve Creamy Chicken and Dumplings Soup, 18.8 oz Can"
+            product6.barcode = "0051000142931"
+            product6.price = 1.92
+            
+            let product7 = Product(context: context)
+            product7.name = "Campbell's Condensed French Onion Soup, 10.5 oz Can"
+            product7.barcode = "0051000011770"
+            product7.price = 1.92
+            
+            let product8 = Product(context: context)
+            product8.name = "Condensed Cream of Chicken Soup with Herbs, 10.5 oz Can"
+            product8.barcode = "0051000123275"
+            product8.price = 1.92
+            
+            let product9 = Product(context: context)
+            product9.name = "Cadbury Dairy Milk Bubbly Mint Chocolate Block 160g"
+            product9.barcode = "9300617063735"
+            product9.price = 8.99
             
             // Save the product
             try context.save()
