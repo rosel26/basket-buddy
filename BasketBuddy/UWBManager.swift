@@ -63,6 +63,12 @@ final class UWBManager: NSObject, ObservableObject {
     @Published var isReady = false
     
     @Published var role: FollowingRole = .shopper
+    @Published var isFollowing: Bool = false
+    
+    @Published var leftCartDistance: Double?
+    @Published var rightCartDistance: Double?
+    @Published var isLeftRangingLive: Bool = false
+    @Published var isRightRangingLive: Bool = false
 
     private let serviceType = "basket-uwb"
     private let myPeerID = MCPeerID(displayName: UIDevice.current.name)
@@ -87,7 +93,48 @@ final class UWBManager: NSObject, ObservableObject {
     override init() {
         super.init()
         uwbLog.info("[\(ts())][\(myShortID)] UWBManager init")
+    }
+    
+    func beginDiscovery() {
+        if !isReady {
+            uwbLog.info("[\(ts())][\(myShortID)] beginDiscovery() → startForCurrentRole")
+            startForCurrentRole()
+        } else {
+            uwbLog.info("[\(ts())][\(myShortID)] beginDiscovery() → restartDiscovery")
+            restartDiscovery()
+        }
+    }
 
+    func disconnect() {
+        isFollowing = false
+        status = "Follow mode OFF"
+        
+        sendCommandToComputer("stop_follow")
+    }
+
+    func startFollowMode() {
+        guard isReady else {
+            status = "Cannot start follow: not ready"
+            return
+        }
+        isFollowing = true
+        status = "Follow mode ON"
+        
+        sendCommandToComputer("start_follow")
+    }
+
+    func stopFollowMode() {
+        isFollowing = false
+        status = "Follow mode OFF"
+        
+        sendCommandToComputer("stop_follow")
+    }
+
+    func sendEmergencyStop() {
+        isFollowing = false
+        status = "EMERGENCY STOP sent"
+        
+        sendCommandToComputer("stop_follow")
     }
     
     func sendMyRoleToPeers() {
@@ -296,10 +343,58 @@ final class UWBManager: NSObject, ObservableObject {
         
         var frame: [String: Any] = [
             "t": now,
+            "type": "distance",
             "deviceId": myShortID,
             "distance": distance,
             "role": role.rawValue
         ]
+        
+        let data = try! JSONSerialization.data(withJSONObject: frame)
+        udpConn?.send(content: data + Data([0x0A]), completion: .contentProcessed { _ in })
+    }
+    
+    func sendCommandToComputer(_ command: String) {
+        guard role == .shopper else {
+            return
+        }
+        
+        setupUDP()
+        
+        let now = Date().timeIntervalSince1970
+        
+        let frame: [String: Any] = [
+            "type": "command",
+            "t": now,
+            "deviceId": myShortID,
+            "command": command,
+            "role": role.rawValue
+        ]
+        
+        print("COMMAND SENT}")
+        
+        let data = try! JSONSerialization.data(withJSONObject: frame)
+        udpConn?.send(content: data + Data([0x0A]), completion: .contentProcessed { _ in })
+    }
+    
+    func sendObstacleAvoidanceState(_ isOn: Bool) {
+        guard role == .shopper else {
+            return
+        }
+        
+        setupUDP()
+
+        let now = Date().timeIntervalSince1970
+
+        let frame: [String: Any] = [
+            "type": "command",
+            "t": now,
+            "deviceId": myShortID,
+            "command": "obstacle_avoidance",
+            "value": isOn,
+            "role": role.rawValue
+        ]
+        
+        print("OBSTACLE AVOIDANCE SENT}")
         
         let data = try! JSONSerialization.data(withJSONObject: frame)
         udpConn?.send(content: data + Data([0x0A]), completion: .contentProcessed { _ in })
@@ -339,78 +434,110 @@ final class UWBManager: NSObject, ObservableObject {
 extension UWBManager: NISessionDelegate {
 
     func session(_ session: NISession, didUpdate nearbyObjects: [NINearbyObject]) {
-        
-        guard let obj = nearbyObjects.first,
-                      let dist = obj.distance else { return }
+           guard let obj = nearbyObjects.first,
+                 let dist = obj.distance else { return }
 
-        // Figure out which peer this session belongs to
-        let key = ObjectIdentifier(session)
-        let peerID = peerForSession[key]
-        let now = Date().timeIntervalSince1970
-                
-        let remoteRole = peerID.flatMap { peerRoles[$0] } ?? .shopper
+           let key = ObjectIdentifier(session)
+           let peerID = peerForSession[key]
+           let now = Date().timeIntervalSince1970
 
-        let roleLabel: String
-            switch remoteRole {
-            case .cartLeft:  roleLabel = "LEFT"
-            case .cartRight: roleLabel = "RIGHT"
-            case .shopper:   roleLabel = "SHOPPER"
-        }
+           let remoteRole = peerID.flatMap { peerRoles[$0] } ?? .shopper
 
-        // Update UI-ish state
-        self.lastDistance = Double(dist)
-        self.isRangingLive = true
-        let distStr = String(format: "%.2f", dist)
-        self.status = "Ranging: \(distStr) m"
+           let roleLabel: String
+           switch remoteRole {
+           case .cartLeft:  roleLabel = "LEFT"
+           case .cartRight: roleLabel = "RIGHT"
+           case .shopper:   roleLabel = "SHOPPER"
+           }
 
-        print("""
-                Position @\(now):
+           let distDouble = Double(dist)
+           self.lastDistance = distDouble
+
+           switch remoteRole {
+           case .cartLeft:
+               self.leftCartDistance = distDouble
+               self.isLeftRangingLive = true
+
+           case .cartRight:
+               self.rightCartDistance = distDouble
+               self.isRightRangingLive = true
+
+           case .shopper:
+               break
+           }
+
+           self.isRangingLive = (self.isLeftRangingLive || self.isRightRangingLive) || (remoteRole == .shopper)
+
+           let distStr = String(format: "%.2f", dist)
+
+           if role == .shopper {
+               let leftStr  = leftCartDistance.map { String(format: "%.2f", $0) } ?? "--"
+               let rightStr = rightCartDistance.map { String(format: "%.2f", $0) } ?? "--"
+               self.status = "Ranging carts → L: \(leftStr)m  R: \(rightStr)m"
+           } else {
+               self.status = "Ranging: \(distStr) m from \(roleLabel)"
+           }
+
+           print("""
+                 Position @\(now):
                     distance=\(distStr) from \(roleLabel)
-                """)
-        
-        self.sendPoseToComputer(distance: Double(dist))
-        
-        self.isRangingLive = true
+                 """)
 
-        self.status = "Ranging: \(distStr) m"
+           self.sendPoseToComputer(distance: distDouble)
 
-        if now - lastPoseSentAt >= poseSendInterval {
-            lastPoseSentAt = now
-            sendPoseUpdate(from: obj, timestamp: now)
-        }
-    }
+           if now - lastPoseSentAt >= poseSendInterval {
+               lastPoseSentAt = now
+               sendPoseUpdate(from: obj, timestamp: now)
+           }
+       }
 
     func session(_ session: NISession, didInvalidateWith error: Error) {
-        uwbLog.error("[\(ts())][\(myShortID)] NI invalidated error=\(error.localizedDescription, privacy: .public)")
-        self.status = "Session invalidated: \(error.localizedDescription)"
-        self.isRangingLive = false
+            uwbLog.error("[\(ts())][\(myShortID)] NI invalidated error=\(error.localizedDescription, privacy: .public)")
+            self.status = "Session invalidated: \(error.localizedDescription)"
 
-        let key = ObjectIdentifier(session)
-        if let peerID = peerForSession[key] {
-            uwbLog.info("[\(ts())][\(myShortID)] Cleaning up NI session for peer \(peerID.displayName)")
-            niSessions[peerID] = nil
-            peerForSession[key] = nil
+            let key = ObjectIdentifier(session)
+            if let peerID = peerForSession[key] {
+                let remoteRole = peerRoles[peerID] ?? .shopper
 
-            if let token = peerTokens[peerID] {
-                uwbLog.info("[\(ts())][\(myShortID)] Restarting NI for peer \(peerID.displayName)")
-                startRanging(with: peerID, token: token)
+                if role == .shopper {
+                    switch remoteRole {
+                    case .cartLeft:
+                        self.leftCartDistance = nil
+                        self.isLeftRangingLive = false
+                    case .cartRight:
+                        self.rightCartDistance = nil
+                        self.isRightRangingLive = false
+                    case .shopper:
+                        break
+                    }
+                }
+
+                uwbLog.info("[\(ts())][\(myShortID)] Cleaning up NI session for peer \(peerID.displayName)")
+                niSessions[peerID] = nil
+                peerForSession[key] = nil
+
+                if let token = peerTokens[peerID] {
+                    uwbLog.info("[\(ts())][\(myShortID)] Restarting NI for peer \(peerID.displayName)")
+                    startRanging(with: peerID, token: token)
+                }
             }
+
+            self.isRangingLive = (isLeftRangingLive || isRightRangingLive)
         }
-    }
 
     func sessionWasSuspended(_ session: NISession) {
-        uwbLog.info("[\(ts())][\(myShortID)] NI suspended")
-        self.status = "Session suspended"
-    }
+            uwbLog.info("[\(ts())][\(myShortID)] NI suspended")
+            self.status = "Session suspended"
+        }
 
-    func sessionSuspensionEnded(_ session: NISession) {
-        uwbLog.info("[\(ts())][\(myShortID)] NI suspension ended — rerun")
-        self.status = "Session resumed"
+        func sessionSuspensionEnded(_ session: NISession) {
+            uwbLog.info("[\(ts())][\(myShortID)] NI suspension ended — rerun")
+            self.status = "Session resumed"
 
-        let key = ObjectIdentifier(session)
-        if let peerID = peerForSession[key],
-           let token = peerTokens[peerID] {
-            startRanging(with: peerID, token: token)
+            let key = ObjectIdentifier(session)
+            if let peerID = peerForSession[key],
+               let token = peerTokens[peerID] {
+                startRanging(with: peerID, token: token)
         }
     }
 }
