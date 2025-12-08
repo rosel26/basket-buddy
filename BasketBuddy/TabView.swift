@@ -20,18 +20,26 @@ struct BasketItem: Identifiable {
 
 struct RootView: View {
     @State private var isConnected = false
+    @State private var roleChosen = false
+    @StateObject private var uwb = UWBManager()
 
     var body: some View {
-        if isConnected {
+        if isConnected && roleChosen{
             MainTabView()
-        } else {
+                .environmentObject(uwb)
+        }
+        else if isConnected {
+            FollowingRoleView(roleChosen: $roleChosen)
+                .environmentObject(uwb)
+        }
+        else {
             WelcomeView(isConnected: $isConnected)
         }
     }
 }
 
 struct MainTabView: View {
-    @StateObject private var uwb = UWBManager()
+    @EnvironmentObject var uwb: UWBManager
 
     var body: some View {
         TabView {
@@ -41,6 +49,7 @@ struct MainTabView: View {
                     Image(systemName: "house")
                     Text("Home")
                 }
+                .environmentObject(uwb)
             // Basket Contents
             BasketView()
                 .tabItem {
@@ -90,18 +99,23 @@ struct WelcomeView: View {
     }
 }
 
-struct CartControlView: View {
+struct FollowingRoleView: View {
+    @Binding var roleChosen: Bool
+    @EnvironmentObject var uwb: UWBManager
+        
     var body: some View {
         VStack(spacing: 40) {
-            Text("Your cart is active")
+            Text("Select Device Role")
                 .font(.headline)
                 .padding(.top, 20)
             
-            // Start Cart Button
             Button(action: {
-                startCart()
+                uwb.role = .shopper
+                uwb.startForCurrentRole()
+                uwb.sendMyRoleToPeers()
+                roleChosen = true
             }) {
-                Text("Start Cart")
+                Text("Shopper")
                     .font(.title3)
                     .foregroundColor(.white)
                     .frame(width: 200, height: 60)
@@ -109,11 +123,13 @@ struct CartControlView: View {
                     .cornerRadius(12)
             }
             
-            // Stop Cart Button
             Button(action: {
-                stopCart()
+                uwb.role = .cartLeft
+                uwb.startForCurrentRole()
+                uwb.sendMyRoleToPeers()
+                roleChosen = true
             }) {
-                Text("Stop Cart")
+                Text("Cart Left")
                     .font(.title3)
                     .foregroundColor(.white)
                     .frame(width: 200, height: 60)
@@ -121,11 +137,13 @@ struct CartControlView: View {
                     .cornerRadius(12)
             }
             
-            // Disconnect Button
             Button(action: {
-                disconnectCart()
+                uwb.role = .cartRight
+                uwb.startForCurrentRole()
+                uwb.sendMyRoleToPeers()
+                roleChosen = true
             }) {
-                Text("Disconnect")
+                Text("Cart Right")
                     .font(.title3)
                     .foregroundColor(.white)
                     .frame(width: 200, height: 60)
@@ -138,13 +156,285 @@ struct CartControlView: View {
     }
 }
 
-func startCart() {
+enum CartConnectionState: String {
+    case disconnected = "Disconnected"
+    case searching    = "Searching"
+    case ready        = "Ready to Begin"
+    case following    = "Following You"
+    case error        = "Error"
 }
 
-func stopCart() {
+struct CartControlView: View {
+    @EnvironmentObject var uwb: UWBManager
+    
+    @State private var obstacleAvoidanceOn: Bool = false
+    @State private var lastStatusMessage: String = "Cart is idle."
+    
+    private var bothCartsLocked: Bool {
+        if uwb.role == .shopper {
+            return uwb.isLeftRangingLive && uwb.isRightRangingLive
+        } else {
+            return uwb.isRangingLive
+        }
+    }
+
+    private var connectionState: CartConnectionState {
+        if !uwb.isReady {
+            return .disconnected
+        }
+
+        if uwb.role == .shopper {
+            if bothCartsLocked {
+                return uwb.isFollowing ? .following : .ready
+            } else {
+                return .searching
+            }
+        } else {
+            if bothCartsLocked {
+                return uwb.isFollowing ? .following : .ready
+            } else {
+                return .searching
+            }
+        }
+    }
+    
+    private var stateColor: Color {
+        switch connectionState {
+        case .disconnected: return .gray
+        case .searching:    return .yellow
+        case .ready:        return .blue
+        case .following:    return .green
+        case .error:        return .red
+        }
+    }
+    
+    private var primaryActionTitle: String {
+        switch connectionState {
+        case .disconnected, .error:
+            return "Connect to Cart"
+        case .searching:
+            return "Cancel Search"
+        case .ready:
+            return "Start Follow Mode"
+        case .following:
+            return "Pause/Stop Follow"
+        }
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                headerSection
+                statusCard
+                connectionControls
+                followSettings
+                emergencySection
+            }
+            .padding()
+        }
+        .background(Color(.systemBackground))
+    }
 }
 
-func disconnectCart() {
+private extension CartControlView {
+    
+    var headerSection: some View {
+        VStack(spacing: 8) {
+            Text("Cart Control")
+                .font(.title2)
+                .bold()
+            
+            Text("Role: \(uwb.role.rawValue)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 16)
+    }
+    
+    var statusCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(stateColor)
+                    .frame(width: 14, height: 14)
+                
+                Text(connectionState.rawValue)
+                    .font(.headline)
+                
+                Spacer()
+            }
+            
+            Text(uwb.isFollowing
+                 ? "Cart is actively following you."
+                 : statusSubtitle)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Left Cart")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(distanceString(uwb.leftCartDistance))
+                        .font(.body)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Right Cart")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(distanceString(uwb.rightCartDistance))
+                        .font(.body)
+                }
+            }
+            
+            Text(uwb.status)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .frame(height: 150)   // fixed so the box doesn't jump
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(16)
+    }
+
+    private func distanceString(_ value: Double?) -> String {
+        guard let v = value else { return "--" }
+        return String(format: "%.2f m", v)
+    }
+    
+    var connectionControls: some View {
+        VStack(spacing: 12) {
+            Text("Connection & Follow")
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            Button(action: primaryActionTapped) {
+                Text(primaryActionTitle)
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(Color.accentColor)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+            }
+            
+            Button(action: disconnectTapped) {
+                Text("Disconnect Cart")
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(Color(.tertiarySystemBackground))
+                    .foregroundColor(.primary)
+                    .cornerRadius(12)
+            }
+        }
+    }
+    
+    var followSettings: some View {
+        VStack(spacing: 16) {
+            Text("Developer Options")
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Toggle(isOn: $obstacleAvoidanceOn.onChange { newValue in
+                uwb.sendObstacleAvoidanceState(newValue)
+            }) {
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Obstacle Avoidance (Dev)")
+                    Text("Use LIDAR to slow or stop the cart near obstacles.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+                
+                
+        }
+    }
+    
+    var emergencySection: some View {
+        VStack(spacing: 12) {
+            Text("Safety")
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            Button(action: emergencyStopTapped) {
+                Text("EMERGENCY STOP")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(Color.red)
+                    .foregroundColor(.white)
+                    .cornerRadius(16)
+            }
+        }
+        .padding(.bottom, 24)
+    }
+}
+
+extension Binding {
+    func onChange(_ handler: @escaping (Value) -> Void) -> Binding<Value> {
+        Binding(
+            get: { self.wrappedValue },
+            set: { newValue in
+                self.wrappedValue = newValue
+                handler(newValue)
+            }
+        )
+    }
+}
+
+private extension CartControlView {
+    var statusSubtitle: String {
+        switch connectionState {
+        case .disconnected:
+            return "Press Connect to search for the shopper’s iPhone."
+        case .searching:
+            return "Searching for shopper and distance updates…"
+        case .ready:
+            return "Cart is tracking you. You can start following."
+        case .following:
+            return "Cart is moving using UWB data."
+        case .error:
+            return "Something went wrong. Try disconnecting and reconnecting."
+        }
+    }
+}
+
+private extension CartControlView {
+    
+    func primaryActionTapped() {
+        switch connectionState {
+        case .disconnected, .error:
+            uwb.beginDiscovery()
+            lastStatusMessage = "Starting discovery for peers…"
+            
+        case .searching:
+            uwb.disconnect()
+            lastStatusMessage = "Search cancelled."
+            
+        case .ready:
+            uwb.startFollowMode()
+            lastStatusMessage = "Requested cart to start following."
+            
+        case .following:
+            uwb.stopFollowMode()
+            lastStatusMessage = "Requested cart to stop / pause following."
+        }
+    }
+    
+    func disconnectTapped() {
+        uwb.sendEmergencyStop()
+        lastStatusMessage = "Cart disconnected."
+    }
+    
+    func emergencyStopTapped() {
+        uwb.sendEmergencyStop()
+        lastStatusMessage = "Emergency stop sent. Cart should halt immediately."
+    }
 }
 
 // https://www.hackingwithswift.com/example-code/media/how-to-create-a-barcode
