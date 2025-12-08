@@ -167,6 +167,16 @@ struct CartControlView: View {
                 .font(.headline)
                 .padding(.top, 20)
             
+            // Have some sort of connection srength
+            // based on how often it is receiving an update
+            // from both of them
+            
+            // Show connection status (Connected, Searching, Lost, etc.)
+            
+            // Start Follow Mode
+
+            // Stop / Pause Follow Mode
+            
             // Start Cart Button
             Button(action: {
                 startCart()
@@ -212,6 +222,8 @@ func startCart() {
 }
 
 func stopCart() {
+    
+    // send in a stop command
 }
 
 func disconnectCart() {

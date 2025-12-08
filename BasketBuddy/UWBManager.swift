@@ -68,8 +68,8 @@ final class UWBManager: NSObject, ObservableObject {
     private let myPeerID = MCPeerID(displayName: UIDevice.current.name)
     private var mcSession: MCSession!
     
-    private var advertiser: MCNearbyServiceAdvertiser!
-    private var browser: MCNearbyServiceBrowser!
+    private var advertiser: MCNearbyServiceAdvertiser?
+    private var browser: MCNearbyServiceBrowser?
 
     private var lastPoseSentAt: TimeInterval = 0
     private let poseSendInterval: TimeInterval = 0.2 // 5 Hz
@@ -87,7 +87,6 @@ final class UWBManager: NSObject, ObservableObject {
     override init() {
         super.init()
         uwbLog.info("[\(ts())][\(myShortID)] UWBManager init")
-        // setupMultipeer()
 
     }
     
@@ -167,23 +166,26 @@ final class UWBManager: NSObject, ObservableObject {
 
             let discoveryInfo = ["role": role.rawValue]
 
-            advertiser = MCNearbyServiceAdvertiser(peer: myPeerID,
+            let adv = MCNearbyServiceAdvertiser(peer: myPeerID,
                                                    discoveryInfo: discoveryInfo,
                                                    serviceType: serviceType)
-            advertiser.delegate = self
-            advertiser.startAdvertisingPeer()
-
+            adv.delegate = self
+            adv.startAdvertisingPeer()
+            self.advertiser = adv
+        
             switch role {
             case .shopper:
                 // Shopper advertises and browses
-                browser = MCNearbyServiceBrowser(peer: myPeerID, serviceType: serviceType)
-                browser?.delegate = self
-                browser?.startBrowsingForPeers()
+                let br = MCNearbyServiceBrowser(peer: myPeerID, serviceType: serviceType)
+                br.delegate = self
+                br.startBrowsingForPeers()
+                self.browser = br
+
                 uwbLog.info("[\(ts())][\(myShortID)] MC setup (shopper): advertising + browsing")
                 status = "Advertising & browsing"
 
             case .cartLeft, .cartRight:
-                // Carts only advertise (no browsing → carts won't find carts)
+                // Carts only advertise
                 browser = nil
                 uwbLog.info("[\(ts())][\(myShortID)] MC setup (cart): advertising only")
                 status = "Advertising"
@@ -202,7 +204,6 @@ final class UWBManager: NSObject, ObservableObject {
                         return
                     }
                 } else {
-                    // We DON'T know their role yet → allow for now.
                     uwbLog.info("[\(ts())][\(myShortID)] No known role for \(peerID.displayName) yet, accepting token for now")
                 }
             }
@@ -219,7 +220,6 @@ final class UWBManager: NSObject, ObservableObject {
                 return
             }
 
-            // OPTIONAL: ignore our own tokens (in case we ever accidentally send to ourselves)
             for (_, mySession) in niSessions {
                 if let myToken = mySession.discoveryToken {
                     let myData = try? NSKeyedArchiver.archivedData(
@@ -267,13 +267,20 @@ final class UWBManager: NSObject, ObservableObject {
 
     private func restartDiscovery() {
         uwbLog.info("[\(ts())][\(myShortID)] restartDiscovery() stop→start")
+        guard advertiser != nil else {
+            uwbLog.warning("[\(ts())][\(myShortID)] restartDiscovery() called but advertiser is nil; re-running setupMultipeer()")
+            setupMultipeer()
+            return
+        }
 
-        advertiser.stopAdvertisingPeer()
-        browser.stopBrowsingForPeers()
+        advertiser?.stopAdvertisingPeer()
+        browser?.stopBrowsingForPeers()
+
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 500_000_000)
-            self.advertiser.startAdvertisingPeer()
-            self.browser.startBrowsingForPeers()
+
+            self.advertiser?.startAdvertisingPeer()
+            self.browser?.startBrowsingForPeers()
             self.status = "Restarted discovery"
         }
     }
@@ -340,10 +347,6 @@ extension UWBManager: NISessionDelegate {
         let key = ObjectIdentifier(session)
         let peerID = peerForSession[key]
         let now = Date().timeIntervalSince1970
-
-//        if let d = obj.distance{
-//            self.lastDistance = Double(d)
-//        }
                 
         let remoteRole = peerID.flatMap { peerRoles[$0] } ?? .shopper
 
